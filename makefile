@@ -8,6 +8,8 @@ SRCS = $(wildcard $(SRC_DIR)/*.cpp)
 OBJS = $(patsubst $(SRC_DIR)/%.cpp,$(OBJ_DIR)/%.o,$(SRCS))
 TEST_SRCS = $(wildcard $(TEST_DIR)/*.cpp)
 TEST_OBJS = $(patsubst $(TEST_DIR)/%.cpp,$(OBJ_DIR)/%.test.o,$(TEST_SRCS))
+# テスト用オブジェクトは通常オブジェクトからmain.oを除外
+OBJS_NO_MAIN = $(filter-out $(OBJ_DIR)/main.o, $(OBJS))
 
 TARGET = main
 TEST_TARGET = test_main
@@ -25,7 +27,7 @@ $(OBJ_DIR)/%.test.o: $(TEST_DIR)/%.cpp
 	mkdir -p $(OBJ_DIR)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
-$(TEST_TARGET): $(OBJS) $(TEST_OBJS)
+$(TEST_TARGET): $(OBJS_NO_MAIN) $(TEST_OBJS)
 	$(CXX) $(CXXFLAGS) $^ -o $@ -lgtest -lpthread
 
 test: $(TEST_TARGET)
