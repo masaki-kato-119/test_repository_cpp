@@ -1,8 +1,5 @@
 #include <iostream>
-
-int add(int a, int b) {
-    return a + b;
-}
+#include "add.h"
 
 int main() {
     int total = add(1, 2);
