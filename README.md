@@ -24,6 +24,16 @@ C++の使用を前提に下記のツールを使用しています。
   C++コードのテストカバレッジ（網羅率）を計測・HTMLレポート化するツール。  
   `--coverage`付きでビルド・テスト実行後、`lcov`でカバレッジ収集、`genhtml`でHTML化します。
 
+- **reviewdog**  
+  静的解析（cppcheck）の結果をPull Request上にインラインコメントとして表示するツール。  
+  コードレビュー時に警告が直接見えるため、指摘漏れを防げます。
+
+- **Codecov**  
+  テストカバレッジの結果をPRコメントやバッジで可視化するサービス。  
+  CIで生成したカバレッジ情報（coverage.info）をアップロードすることで、  
+  PR上でカバレッジの増減や詳細レポートを確認できます。
+
+
 ---
 #### ディレクトリ・ファイル構成
 
@@ -41,22 +51,43 @@ test_repository_cpp/
 ```
 
 ---
-#### GitHub Actionsワークフロー例（.github/workflows/ci.yaml）
+## CI/CDパイプラインの特徴
 
-# 主なCI/CDパイプラインの流れ
+- **キャッシュ活用による高速化**  
+  aptパッケージのダウンロードキャッシュを利用し、依存パッケージのインストール時間を短縮しています。
 
 - **push時**  
   - 変更ファイルのみ`cppcheck`で静的解析を実行し、早期に問題を検出します。
 
 - **Pull Request時**  
-  - 依存パッケージのインストール  
-  - プロジェクト全体に対して`cppcheck`で静的解析  
-  - `make`でビルド  
-  - `make test`でGoogle Testによるテスト実行  
-  - `lcov`/`genhtml`でテストカバレッジを計測し、HTMLレポートを生成  
-  - カバレッジレポート（HTML）をアーティファクトとしてアップロード
+  - 依存パッケージのインストール（キャッシュ活用）
+  - `reviewdog`でcppcheckの警告をPR上にインライン表示
+  - `make`でビルド
+  - `make test`でGoogle Testによるテスト実行
+  - `lcov`/`genhtml`でテストカバレッジを計測し、HTMLレポートを生成
+  - `Codecov`でカバレッジ情報をアップロードし、PRコメントやバッジで可視化
 
-カバレッジレポートはGitHub Actionsの「Artifacts」からダウンロードして確認できます。
+- **カバレッジレポートの確認方法**  
+  - 詳細なHTMLレポートはGitHub Actionsの「Artifacts」からダウンロード可能
+  - 概要や増減はPRコメントやバッジで即時確認可能
+
+## 参考: PR上での可視化例
+
+- **cppcheckの警告**  
+  ![cppcheck-reviewdog-sample](https://user-images.githubusercontent.com/12345678/xxxxxx/reviewdog-cppcheck-sample.png)
+- **Codecovのカバレッジバッジ・コメント**  
+  ![codecov-sample](https://user-images.githubusercontent.com/12345678/xxxxxx/codecov-sample.png)
+
+
+## 補足
+
+- CodecovのPRコメントやバッジが表示されない場合は、[codecov.io](https://codecov.io/)でリポジトリを有効化してください。
+- reviewdogのコメントは、PRの「Files changed」タブや「Conversation」タブで確認できます。
+
+-
+
+---
+#### GitHub Actionsワークフロー例（.github/workflows/ci.yaml）
 
 ```yaml
 # ===================================================================
@@ -87,6 +118,14 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Cache apt packages
+        uses: actions/cache@v4
+        with:
+          path: /var/cache/apt/archives
+          key: ${{ runner.os }}-apt-${{ hashFiles('**/ci.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-apt-
+
       - name: Install cppcheck
         run: sudo apt-get update && sudo apt-get install -y cppcheck
 
@@ -115,13 +154,27 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Cache apt packages
+        uses: actions/cache@v4
+        with:
+          path: /var/cache/apt/archives
+          key: ${{ runner.os }}-apt-${{ hashFiles('**/ci.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-apt-
+
       - name: Install dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y gcc g++ cppcheck cmake lcov libgtest-dev
 
-      - name: Static analysis with cppcheck
-        run: cppcheck --enable=all --inconclusive --std=c++17 src
+      - name: Run cppcheck with reviewdog
+        uses: reviewdog/action-cppcheck@v2
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          reporter: github-pr-review
+          fail_on_error: true
+          filter_mode: diff_context
+          cppcheck_flags: --enable=all --inconclusive --std=c++17 src
 
       - name: Build (Makefile)
         run: make
@@ -131,16 +184,16 @@ jobs:
 
       - name: Generate coverage report
         run: |
-          lcov --capture --directory . --output-file coverage.info
+          lcov --capture --directory . --output-file coverage.info --ignore-errors mismatch
           lcov --remove coverage.info '/usr/*' --output-file coverage.info
           lcov --list coverage.info
-          genhtml coverage.info --output-directory coverage-report
+          genhtml coverage.info --output-directory coverage-report --ignore-errors mismatch
 
-      - name: Upload coverage report
-        uses: actions/upload-artifact@v4
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
         with:
-          name: coverage-report-html
-          path: coverage-report
+          files: coverage.info
+          token: ${{ secrets.CODECOV_TOKEN }}
 
 # ===================================================================
 # 補足

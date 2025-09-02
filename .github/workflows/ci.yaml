@@ -26,6 +26,14 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Cache apt packages
+        uses: actions/cache@v4
+        with:
+          path: /var/cache/apt/archives
+          key: ${{ runner.os }}-apt-${{ hashFiles('**/ci.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-apt-
+
       - name: Install cppcheck
         run: sudo apt-get update && sudo apt-get install -y cppcheck
 
@@ -54,13 +62,27 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Cache apt packages
+        uses: actions/cache@v4
+        with:
+          path: /var/cache/apt/archives
+          key: ${{ runner.os }}-apt-${{ hashFiles('**/ci.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-apt-
+
       - name: Install dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y gcc g++ cppcheck cmake lcov libgtest-dev
 
-      - name: Static analysis with cppcheck
-        run: cppcheck --enable=all --inconclusive --std=c++17 src
+      - name: Run cppcheck with reviewdog
+        uses: reviewdog/action-cppcheck@v2
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          reporter: github-pr-review
+          fail_on_error: true
+          filter_mode: diff_context
+          cppcheck_flags: --enable=all --inconclusive --std=c++17 src
 
       - name: Build (Makefile)
         run: make
@@ -75,11 +97,11 @@ jobs:
           lcov --list coverage.info
           genhtml coverage.info --output-directory coverage-report --ignore-errors mismatch
 
-      - name: Upload coverage report
-        uses: actions/upload-artifact@v4
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
         with:
-          name: coverage-report-html
-          path: coverage-report
+          files: coverage.info
+          token: ${{ secrets.CODECOV_TOKEN }}
 
 # ===================================================================
 # 補足
