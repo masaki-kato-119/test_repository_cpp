@@ -76,7 +76,8 @@ jobs:
           sudo apt-get install -y gcc g++ cppcheck cmake lcov libgtest-dev
 
       - name: Install reviewdog
-        uses: reviewdog/reviewdog@v0.17.3
+        run: |
+          sudo curl -sfL https://raw.githubusercontent.com/reviewdog/reviewdog/master/install.sh | sh -s -- -b /usr/local/bin
 
       - name: Run cppcheck with reviewdog
         run: |
