@@ -3,7 +3,7 @@ import sys
 import os
 
 # APIキーは環境変数から取得
-openai.api_key = os.getenv("OPENAI_API_KEY")
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 def main():
     # レビュープロンプトとレビュー対象ファイルを読み込む
@@ -13,7 +13,7 @@ def main():
         code = f.read()
 
     # OpenAI APIにリクエスト
-    response = openai.ChatCompletion.create(
+    response = client.chat.completions.create(
         model="gpt-4o",  # 必要に応じてモデルを変更
         messages=[
             {"role": "system", "content": prompt},
