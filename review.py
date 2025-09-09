@@ -1,6 +1,6 @@
-import openai
 import sys
 import os
+from openai import OpenAI
 
 # APIキーは環境変数から取得
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
