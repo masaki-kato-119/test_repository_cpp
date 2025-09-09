@@ -120,6 +120,14 @@ jobs:
       - name: Install OpenAI Python client
         run: pip install openai
 
+      - name: Find all C++ source files
+        id: cpp_files
+        run: |
+          find src \( -name '*.cpp' -o -name '*.hpp' -o -name '*.h' -o -name '*.cc' -o -name '*.cxx' \) > cpp_files.txt
+          echo "files<<EOF" >> $GITHUB_OUTPUT
+          cat cpp_files.txt >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+          
       - name: Run OpenAI review on all C++ files
         if: steps.cpp_files.outputs.files != ''
         env:
@@ -136,7 +144,7 @@ jobs:
         with:
           name: openai-review
           path: openai_review_*.txt
-          
+
       - name: Build (Makefile)
         run: make
 
