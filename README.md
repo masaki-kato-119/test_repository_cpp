@@ -33,6 +33,9 @@ C++の使用を前提に下記のツールを使用しています。
   CIで生成したカバレッジ情報（coverage.info）をアップロードすることで、  
   PR上でカバレッジの増減や詳細レポートを確認できます。
 
+- **AI自動コードレビュー（OpenAI API連携）**
+  GitHub ActionsのCIパイプライン内で、OpenAI APIを利用したAIコードレビューを自動実行します。
+  push時は変更ファイルのみ、Pull Request時は全C++ファイルを対象に、レビュープロンプト.txtの内容に従ってAIによるレビューコメントを生成し、成果物として保存します。
 
 ---
 #### ディレクトリ・ファイル構成
@@ -47,6 +50,8 @@ test_repository_cpp/
 ├── tests/
 │   └── test_main.cpp      # ← Google Test用テストコード
 ├── README.md
+├── review.py
+├── レビュープロンプト.py
 
 ```
 
@@ -58,10 +63,12 @@ test_repository_cpp/
 
 - **push時**  
   - 変更ファイルのみ`cppcheck`で静的解析を実行し、早期に問題を検出します。
+  - 差分C++ファイルのみを対象に、OpenAI APIを使ったAIレビューを自動実行します。
 
 - **Pull Request時**  
   - 依存パッケージのインストール（キャッシュ活用）
   - `reviewdog`でcppcheckの警告をPR上にインライン表示
+  - 全C++ファイルを対象に、OpenAI APIを使ったAIレビューを自動実行します。
   - `make`でビルド
   - `make test`でGoogle Testによるテスト実行
   - `lcov`/`genhtml`でテストカバレッジを計測し、HTMLレポートを生成
@@ -134,15 +141,40 @@ jobs:
         run: |
           git fetch origin main
           files=$(git diff --name-only origin/main | grep -E '\.(cpp|hpp|cc|cxx|h)$' || true)
-          echo "files=$files" >> $GITHUB_OUTPUT
+          echo "files<<EOF" >> $GITHUB_OUTPUT
+          echo "$files" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
 
       - name: Run cppcheck on changed files
         if: steps.changed_cpp_files.outputs.files != ''
         run: |
+          echo "${{ steps.changed_cpp_files.outputs.files }}" | xargs -r -d '\n' -I{} sh -c 'echo "Running cppcheck on {}"; cppcheck --enable=all --inconclusive --std=c++17 "{}"'
+
+      # ここからOpenAIレビュー
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install OpenAI Python client
+        run: pip install openai
+
+      - name: Run OpenAI review on changed files
+        if: steps.changed_cpp_files.outputs.files != ''
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
           for file in ${{ steps.changed_cpp_files.outputs.files }}; do
-            echo "Running cppcheck on $file"
-            cppcheck --enable=all --inconclusive --std=c++17 $file
+            python review.py "$file" > "openai_review_${file//\//_}.txt"
+            cat "openai_review_${file//\//_}.txt"
           done
+
+      - name: Upload OpenAI review results
+        if: steps.changed_cpp_files.outputs.files != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: openai-review
+          path: openai_review_*.txt
 
   # ===================================================================
   # Job 2: Pull Request時に網羅的な品質チェックを実行するジョブ
@@ -167,20 +199,65 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y gcc g++ cppcheck cmake lcov libgtest-dev
 
-      - name: Run cppcheck with reviewdog
-        uses: reviewdog/action-cppcheck@v2
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          reporter: github-pr-review
-          fail_on_error: true
-          filter_mode: diff_context
-          cppcheck_flags: --enable=all --inconclusive --std=c++17 src
+      - name: Install reviewdog
+        run: |
+          sudo curl -sfL https://raw.githubusercontent.com/reviewdog/reviewdog/master/install.sh | sh -s -- -b /usr/local/bin
 
+      - name: Run cppcheck with reviewdog
+        run: |
+          cppcheck --enable=all --inconclusive --std=c++17 --template="{file}:{line}:{column}: error: {message}" src 2> cppcheck.txt || true
+          cat cppcheck.txt | reviewdog -efm="%f:%l:%c: %t%*[^:]: %m" -name="cppcheck" -reporter=github-pr-review -fail-on-error=true
+        env:
+          REVIEWDOG_GITHUB_API_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # ここからOpenAIレビュー
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install OpenAI Python client
+        run: pip install openai
+
+      - name: Find all C++ source files
+        id: cpp_files
+        run: |
+          find src \( -name '*.cpp' -o -name '*.hpp' -o -name '*.h' -o -name '*.cc' -o -name '*.cxx' \) > cpp_files.txt
+          echo "files<<EOF" >> $GITHUB_OUTPUT
+          cat cpp_files.txt >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Run OpenAI review on all C++ files
+        if: steps.cpp_files.outputs.files != ''
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          for file in $(cat cpp_files.txt); do
+            python review.py "$file" > "openai_review_${file//\//_}.txt"
+            cat "openai_review_${file//\//_}.txt"
+          done
+
+      - name: Upload OpenAI review results
+        if: steps.cpp_files.outputs.files != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: openai-review
+          path: openai_review_*.txt
+          
       - name: Build (Makefile)
         run: make
 
       - name: Run tests (Makefile)
         run: make test
+
+      - name: Upload test results
+        if: failure() || success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: |
+            test-results.xml
+            coverage.info
 
       - name: Generate coverage report
         run: |
